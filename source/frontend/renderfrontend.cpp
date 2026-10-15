@@ -1832,7 +1832,8 @@ void ParserTime(POVMS_Object& cppmsg, TextStreamBuffer *tsb)
         sec = int(i / (POV_LONG)(1000));
         msec = int(i % (POV_LONG)(1000));
         tsb->printf("  Parse Time:     %3d hours %2d minutes %2d seconds (%d.%03d seconds)\n", int(sec / 3600), int((sec / 60) % 60), int(sec % 60), sec, msec);
-        if(parseTime.Exist(kPOVAttrib_CPUTime) == true)
+        // The CPU time is negative if the platform cannot measure per-thread CPU time.
+        if((parseTime.Exist(kPOVAttrib_CPUTime) == true) && (parseTime.TryGetLong(kPOVAttrib_CPUTime, -1) >= 0))
         {
             i = parseTime.TryGetLong(kPOVAttrib_CPUTime, 0);
             sec = int(i / (POV_LONG)(1000));
@@ -1852,7 +1853,7 @@ void ParserTime(POVMS_Object& cppmsg, TextStreamBuffer *tsb)
         sec = int(i / (POV_LONG)(1000));
         msec = int(i % (POV_LONG)(1000));
         tsb->printf("  Bounding Time:  %3d hours %2d minutes %2d seconds (%d.%03d seconds)\n", int(sec / 3600), int((sec / 60) % 60), int(sec % 60), sec, msec);
-        if(boundingTime.Exist(kPOVAttrib_CPUTime) == true)
+        if((boundingTime.Exist(kPOVAttrib_CPUTime) == true) && (boundingTime.TryGetLong(kPOVAttrib_CPUTime, -1) >= 0))
         {
             i = boundingTime.TryGetLong(kPOVAttrib_CPUTime, 0);
             sec = int(i / (POV_LONG)(1000));
@@ -1885,7 +1886,7 @@ void RenderTime(POVMS_Object& cppmsg, TextStreamBuffer *tsb)
         sec = int(i / (POV_LONG)(1000));
         msec = int(i % (POV_LONG)(1000));
         tsb->printf("  Photon Time:    %3d hours %2d minutes %2d seconds (%d.%03d seconds)\n", int(sec / 3600), int((sec / 60) % 60), int(sec % 60), sec, msec);
-        if(photonTime.Exist(kPOVAttrib_CPUTime) == true)
+        if((photonTime.Exist(kPOVAttrib_CPUTime) == true) && (photonTime.TryGetLong(kPOVAttrib_CPUTime, -1) >= 0))
         {
             i = photonTime.TryGetLong(kPOVAttrib_CPUTime, 0);
             sec = int(i / (POV_LONG)(1000));
@@ -1905,7 +1906,7 @@ void RenderTime(POVMS_Object& cppmsg, TextStreamBuffer *tsb)
         sec = int(i / (POV_LONG)(1000));
         msec = int(i % (POV_LONG)(1000));
         tsb->printf("  Radiosity Time: %3d hours %2d minutes %2d seconds (%d.%03d seconds)\n", int(sec / 3600), int((sec / 60) % 60), int(sec % 60), sec, msec);
-        if(radiosityTime.Exist(kPOVAttrib_CPUTime) == true)
+        if((radiosityTime.Exist(kPOVAttrib_CPUTime) == true) && (radiosityTime.TryGetLong(kPOVAttrib_CPUTime, -1) >= 0))
         {
             i = radiosityTime.TryGetLong(kPOVAttrib_CPUTime, 0);
             sec = int(i / (POV_LONG)(1000));
@@ -1925,7 +1926,7 @@ void RenderTime(POVMS_Object& cppmsg, TextStreamBuffer *tsb)
         sec = int(i / (POV_LONG)(1000));
         msec = int(i % (POV_LONG)(1000));
         tsb->printf("  Trace Time:     %3d hours %2d minutes %2d seconds (%d.%03d seconds)\n", int(sec / 3600), int((sec / 60) % 60), int(sec % 60), sec, msec);
-        if(renderTime.Exist(kPOVAttrib_CPUTime) == true)
+        if((renderTime.Exist(kPOVAttrib_CPUTime) == true) && (renderTime.TryGetLong(kPOVAttrib_CPUTime, -1) >= 0))
         {
             i = renderTime.TryGetLong(kPOVAttrib_CPUTime, 0);
             sec = int(i / (POV_LONG)(1000));
