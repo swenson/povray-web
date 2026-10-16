@@ -959,20 +959,51 @@ sphere {
     log('');
     log(`$ povray ${request.args.join(' ')}`, 'command');
 
-    const worker = new Worker('render-worker.js');
     const started = performance.now();
-    job = { worker, started, cancelled: false, killTimer: 0, tick: 0 };
+    const eng = getEngine();
+    job = { engine: eng, started, cancelled: false, killTimer: 0, tick: 0 };
     setRunning(true);
-    setState('Loading…', 'busy');
+    setState(eng.ready ? 'Starting…' : 'Loading POV-Ray…', 'busy');
     statusEl.textContent = '';
     job.tick = setInterval(() => { elapsedEl.textContent = formatDuration(performance.now() - started); }, 200);
+    eng.worker.postMessage(request);
+  }
 
-    worker.onmessage = (e) => onWorkerMessage(e.data);
-    worker.onerror = (e) => {
-      log('Render worker error: ' + (e.message || 'unknown error'), 'error');
+  // ---------------------------------------------------------------------------
+  // Render engine: one long-lived worker hosting POV-Ray, reused for every
+  // render (see render-worker.js for why). It is only replaced when it has
+  // crashed or a render had to be killed.
+  // ---------------------------------------------------------------------------
+
+  let engine = null;
+
+  function getEngine() {
+    if (engine) return engine;
+    const eng = { worker: new Worker('render-worker.js'), ready: false };
+    eng.worker.onmessage = (e) => {
+      if (engine !== eng) return;  // a discarded engine still winding down
+      if (e.data.type === 'ready') eng.ready = true;
+      onWorkerMessage(e.data);
+    };
+    eng.worker.onerror = (e) => {
+      if (engine !== eng) return;
+      e.preventDefault();
+      log('POV-Ray crashed: ' + (e.message || 'unknown error'), 'error');
+      discardEngine();
       endJob('Failed', 'error');
     };
-    worker.postMessage(request);
+    engine = eng;
+    return eng;
+  }
+
+  function discardEngine() {
+    if (!engine) return;
+    engine.worker.terminate();
+    engine = null;
+  }
+
+  function warmUpEngine() {
+    if (window.crossOriginIsolated && !engine) getEngine().worker.postMessage({ type: 'init' });
   }
 
   function onWorkerMessage(msg) {
@@ -995,8 +1026,12 @@ sphere {
       case 'preview':
         showPreview(msg.width, msg.height, msg.pixels);
         break;
-      case 'error':
+      case 'ready':
+        if (!job) setState('Ready');
+        break;
+      case 'fatal':
         log(msg.message, 'error');
+        discardEngine();
         endJob('Failed', 'error');
         break;
       case 'done': {
@@ -1022,7 +1057,6 @@ sphere {
     clearInterval(job.tick);
     clearTimeout(job.killTimer);
     elapsedEl.textContent = formatDuration(performance.now() - job.started);
-    job.worker.terminate();
     job = null;
     setRunning(false);
     setState(text, cls);
@@ -1033,11 +1067,14 @@ sphere {
     if (!job) return;
     job.cancelled = true;
     setState('Stopping…', 'busy');
-    job.worker.postMessage({ type: 'cancel' });
-    // If POV-Ray does not wind down promptly (e.g. stuck in a long parse), kill it.
+    job.engine.worker.postMessage({ type: 'cancel' });
+    // If POV-Ray does not wind down promptly (e.g. stuck in a long parse),
+    // kill it; the next render starts a fresh engine.
     job.killTimer = setTimeout(() => {
-      log('Render did not stop in time; terminated.', 'error');
+      log('Render did not stop in time; POV-Ray was restarted.', 'error');
+      discardEngine();
       endJob('Stopped', 'error');
+      warmUpEngine();
     }, 5000);
   }
 
@@ -1163,5 +1200,6 @@ sphere {
   });
 
   init();
+  warmUpEngine();
   loadManifest().catch(() => { /* reported when used */ });
 })();

@@ -171,10 +171,10 @@ set(POVWEB_LINK_FLAGS
     -sEXPORT_NAME=createPovray
     -sENVIRONMENT=web,worker
     -sINVOKE_RUN=0
-    -sEXIT_RUNTIME=1
+    -sEXIT_RUNTIME=0
     -sFORCE_FILESYSTEM=1
     -sEXPORTED_RUNTIME_METHODS=callMain,FS,wasmMemory
-    -sEXPORTED_FUNCTIONS=_main,_povweb_cancel,_povweb_framebuffer,_povweb_width,_povweb_height,_povweb_frame_serial,_povweb_current_frame,_povweb_total_frames
+    -sEXPORTED_FUNCTIONS=_main,_povweb_submit,_povweb_cancel,_povweb_framebuffer,_povweb_width,_povweb_height,_povweb_frame_serial,_povweb_current_frame,_povweb_total_frames
     # Standard include files and INI files, packaged as `povray.data`.
     # (`SHELL:` keeps CMake from de-duplicating the repeated flag.)
     "SHELL:--preload-file ${POV_ROOT}/distribution/include@/povray/include"

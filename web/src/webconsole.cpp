@@ -4,11 +4,17 @@
 ///
 /// Entry point for the WebAssembly (Emscripten) build of POV-Ray.
 ///
-/// This is a trimmed-down variant of `vfe/unix/unixconsole.cpp`. Instead of
-/// an SDL or text display it renders into an RGBA framebuffer that lives in
-/// (shared) WebAssembly memory, so that the JavaScript side can poll it and
-/// show a live preview on an HTML canvas. Cancellation is requested from
-/// JavaScript via an exported function instead of POSIX signals.
+/// This is a variant of `vfe/unix/unixconsole.cpp`. Instead of rendering one
+/// scene and exiting, `main()` keeps a single POV-Ray session alive and runs
+/// render jobs submitted from JavaScript, much like the Windows GUI renders
+/// many scenes in one process. (Starting a fresh WebAssembly instance for
+/// every render leaks memory in browsers, since each instance reserves a
+/// large shared memory that is not reliably reclaimed.)
+///
+/// Instead of an SDL or text display it renders into an RGBA framebuffer that
+/// lives in (shared) WebAssembly memory, so that the JavaScript side can poll
+/// it and show a live preview on an HTML canvas. Cancellation is requested
+/// from JavaScript via an exported function instead of POSIX signals.
 ///
 /// @copyright
 /// @parblock
@@ -41,7 +47,10 @@
 // C++ standard header files
 #include <algorithm>
 #include <atomic>
+#include <condition_variable>
+#include <fstream>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -78,7 +87,7 @@ enum ReturnValue
 //
 // The JavaScript side runs on a different thread than the renderer, and reads
 // these values directly out of the shared WebAssembly memory, so everything
-// here is either atomic or only ever grows.
+// here is atomic.
 //******************************************************************************
 
 static std::atomic<bool>     gCancelRender(false);
@@ -89,12 +98,28 @@ static std::atomic<uint32_t> gFrameSerial(0);
 static std::atomic<int>      gCurrentFrame(0);
 static std::atomic<int>      gTotalFrames(0);
 
-// Framebuffers are never freed while the program runs, so that JavaScript
-// never reads from a buffer that has been handed back to the allocator.
+// Framebuffers of the current job. They are only freed when the next job
+// starts, so that JavaScript never reads from a buffer that has been handed
+// back to the allocator while the render it belongs to is running.
 static std::vector<std::unique_ptr<uint8_t[]>> gFrameBuffers;
+
+// Job queue: JavaScript writes the command-line arguments of a render to
+// kJobArgsFile (one per line) and calls povweb_submit().
+static const char kJobArgsFile[] = "/povweb/job.args";
+static std::mutex              gJobMutex;
+static std::condition_variable gJobPending;
+static unsigned int            gJobsSubmitted = 0;
 
 extern "C"
 {
+    /// Start a render job, see kJobArgsFile.
+    EMSCRIPTEN_KEEPALIVE void povweb_submit()
+    {
+        std::lock_guard<std::mutex> lock(gJobMutex);
+        ++gJobsSubmitted;
+        gJobPending.notify_one();
+    }
+
     /// Request the current render to be cancelled.
     EMSCRIPTEN_KEEPALIVE void povweb_cancel() { gCancelRender = true; }
 
@@ -298,14 +323,6 @@ static void PrintVersion(void)
     );
 }
 
-static int ErrorExit(vfeSession *session)
-{
-    fprintf(stderr, "%s\n", session->GetErrorString());
-    session->Shutdown();
-    delete session;
-    return RETURN_ERROR;
-}
-
 static void CancelRender(vfeSession *session)
 {
     session->CancelRender();  // request the backend to cancel
@@ -315,18 +332,47 @@ static void CancelRender(vfeSession *session)
     PrintStatus (session);
 }
 
-int main (int argc, char **argv)
+static std::vector<std::string> WaitForJob()
 {
-    vfeUnixSession   *session;
+    static unsigned int jobsTaken = 0;
+    {
+        std::unique_lock<std::mutex> lock(gJobMutex);
+        gJobPending.wait(lock, [] { return gJobsSubmitted != jobsTaken; });
+        ++jobsTaken;
+    }
+    std::vector<std::string> args;
+    std::ifstream file(kJobArgsFile);
+    std::string line;
+    while (std::getline(file, line))
+        if (!line.empty())
+            args.push_back(line);
+    return args;
+}
+
+static ReturnValue RenderJob(vfeUnixSession *session, const std::vector<std::string>& args)
+{
     vfeStatusFlags    flags;
     vfeRenderOptions  opts;
-    ReturnValue       retval = RETURN_OK;
 
     gCancelRender = false;
+    gCurrentFrame = 0;
+    gTotalFrames = 0;
+    gFramePixels = nullptr;
+    gFrameWidth = 0;
+    gFrameHeight = 0;
+    gFrameBuffers.clear();
+    ++gFrameSerial;
 
-    session = new vfeUnixSession();
-    if (session->Initialize(nullptr, nullptr) != vfeNoError)
-        return ErrorExit(session);
+    for (const std::string& arg : args)
+    {
+        if (arg == "--version" || arg == "-version")
+        {
+            PrintVersion();
+            return RETURN_OK;
+        }
+    }
+
+    session->Reset();
 
     // Default number of render threads: the number of logical CPUs reported
     // by the browser (`navigator.hardwareConcurrency`).
@@ -335,45 +381,18 @@ int main (int argc, char **argv)
         nthreads = 4;
     opts.SetThreadCount(nthreads);
 
-    // process command-line options
-    session->GetUnixOptions()->ProcessOptions(&argc, &argv);
-    if (session->GetUnixOptions()->isOptionSet("general", "help"))
-    {
-        session->Shutdown() ;
-        PrintStatus (session) ;
-        session->GetUnixOptions()->PrintOptions();
-        delete session;
-        return RETURN_OK;
-    }
-    else if (session->GetUnixOptions()->isOptionSet("general", "version"))
-    {
-        session->Shutdown() ;
-        PrintVersion();
-        delete session;
-        return RETURN_OK;
-    }
-    else if (session->GetUnixOptions()->isOptionSet("general", "benchmark"))
-    {
-        fprintf(stderr, "%s: the built-in benchmark is not supported by the web build\n", PACKAGE);
-        session->Shutdown();
-        delete session;
-        return RETURN_ERROR;
-    }
-
     // process INI settings
-    session->SetDisplayCreator(WebDisplayCreator);
     session->GetUnixOptions()->Process_povray_ini(opts);
-    while (*++argv)
-        opts.AddCommand (*argv);
+    for (const std::string& arg : args)
+        opts.AddCommand (arg);
 
     // set all options and start rendering
-    if (session->SetOptions(opts) != vfeNoError)
+    if ((session->SetOptions(opts) != vfeNoError) || (session->StartRender() != vfeNoError))
     {
-        fprintf(stderr,"\nProblem with option setting\n");
-        return ErrorExit(session);
+        PrintStatus (session);
+        fprintf(stderr, "%s\n", session->GetErrorString());
+        return RETURN_ERROR;
     }
-    if (session->StartRender() != vfeNoError)
-        return ErrorExit(session);
 
     // main render loop
     session->SetEventMask(stBackendStateChanged);  // immediately notify this event
@@ -398,12 +417,34 @@ int main (int argc, char **argv)
         if (flags & stBackendStateChanged)
             PrintStatusChanged (session);
     }
+    PrintStatus (session);
 
     if (session->Succeeded() == false)
-        retval = gCancelRender ? RETURN_USER_ABORT : RETURN_ERROR;
-    session->Shutdown();
-    PrintStatus (session);
-    delete session;
+        return gCancelRender ? RETURN_USER_ABORT : RETURN_ERROR;
+    return RETURN_OK;
+}
 
-    return retval;
+int main (int argc, char **argv)
+{
+    vfeUnixSession *session = new vfeUnixSession();
+    if (session->Initialize(nullptr, nullptr) != vfeNoError)
+    {
+        fprintf(stderr, "%s\n", session->GetErrorString());
+        fflush(stderr);
+        MAIN_THREAD_ASYNC_EM_ASM({ Module["povwebReady"] && Module["povwebReady"](false); });
+        delete session;
+        return RETURN_ERROR;
+    }
+    session->SetDisplayCreator(WebDisplayCreator);
+    MAIN_THREAD_ASYNC_EM_ASM({ Module["povwebReady"] && Module["povwebReady"](true); });
+
+    // Serve render jobs for as long as the page lives.
+    while (true)
+    {
+        std::vector<std::string> args = WaitForJob();
+        ReturnValue retval = RenderJob(session, args);
+        fflush(stdout);
+        fflush(stderr);
+        MAIN_THREAD_ASYNC_EM_ASM({ Module["povwebJobDone"] && Module["povwebJobDone"]($0); }, int(retval));
+    }
 }
