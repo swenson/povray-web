@@ -16,7 +16,11 @@
 
 'use strict';
 
-importScripts('povray.js');
+// The page passes the build version as a query string (see app.js); pass it
+// on to the files loaded from here.
+const VERSION_QUERY = self.location.search;
+
+importScripts('povray.js' + VERSION_QUERY);
 
 if (self.name !== 'em-pthread') {
   const JOB_ARGS_FILE = '/povweb/job.args';  // see webconsole.cpp
@@ -71,7 +75,7 @@ if (self.name !== 'em-pthread') {
       createPovray({
         print: handleStdout,
         printErr: (text) => post({ type: 'log', stream: 'stderr', text }),
-        locateFile: (path) => base + path,
+        locateFile: (path) => base + path + VERSION_QUERY,
         povwebReady: (ok) => (ok ? resolve() : reject(new Error('POV-Ray failed to initialize'))),
         povwebJobDone: (code) => finishJob(code),
         onAbort: (what) => reject(new Error('POV-Ray aborted: ' + what)),

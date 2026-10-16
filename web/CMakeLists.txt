@@ -199,6 +199,8 @@ set_property(TARGET povray APPEND PROPERTY LINK_DEPENDS ${POVWEB_PACKAGED_FILES}
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 file(GLOB POVWEB_SHELL_FILES CONFIGURE_DEPENDS "${WEB_ROOT}/shell/*")
+# index.html is written by stamp_version.py instead of being copied.
+list(REMOVE_ITEM POVWEB_SHELL_FILES "${WEB_ROOT}/shell/index.html")
 
 add_custom_target(site ALL
     COMMAND ${CMAKE_COMMAND} -E make_directory "${SITE_DIR}"
@@ -207,7 +209,11 @@ add_custom_target(site ALL
     COMMAND Python3::Interpreter -I "${WEB_ROOT}/tools/make_manifest.py"
             --scenes "${POV_ROOT}/distribution/scenes"
             --out "${SITE_DIR}"
-    DEPENDS povray ${POVWEB_SHELL_FILES} "${WEB_ROOT}/tools/make_manifest.py"
+    COMMAND Python3::Interpreter -I "${WEB_ROOT}/tools/stamp_version.py"
+            --template "${WEB_ROOT}/shell/index.html"
+            --site "${SITE_DIR}"
+    DEPENDS povray ${POVWEB_SHELL_FILES} "${WEB_ROOT}/shell/index.html"
+            "${WEB_ROOT}/tools/make_manifest.py" "${WEB_ROOT}/tools/stamp_version.py"
     COMMENT "Assembling web site in ${SITE_DIR}"
     VERBATIM
 )

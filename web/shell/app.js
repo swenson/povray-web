@@ -21,6 +21,11 @@
   const LOCAL_ROOT = '/work';
   const STORAGE_KEY = 'povray-web-state-v1';
   const MAX_LOG_LINES = 5000;
+  // Build version, appended to the URLs of versioned files so that browsers
+  // never mix files from different deployments (see web/tools/stamp_version.py).
+  const VERSION_META = document.querySelector('meta[name="povweb-version"]');
+  const VERSION_QUERY = VERSION_META && !VERSION_META.content.startsWith('@')
+    ? '?v=' + encodeURIComponent(VERSION_META.content) : '';
 
   const NEW_SCENE = `// Persistence of Vision Ray Tracer scene description file
 #version 3.8;
@@ -677,7 +682,7 @@ sphere {
 
   function loadManifest() {
     if (!manifestPromise) {
-      manifestPromise = fetch('scenes.json')
+      manifestPromise = fetch('scenes.json' + VERSION_QUERY)
         .then((r) => {
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
           return r.json();
@@ -979,7 +984,7 @@ sphere {
 
   function getEngine() {
     if (engine) return engine;
-    const eng = { worker: new Worker('render-worker.js'), ready: false };
+    const eng = { worker: new Worker('render-worker.js' + VERSION_QUERY), ready: false };
     eng.worker.onmessage = (e) => {
       if (engine !== eng) return;  // a discarded engine still winding down
       if (e.data.type === 'ready') eng.ready = true;

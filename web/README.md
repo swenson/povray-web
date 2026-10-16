@@ -54,6 +54,25 @@ On hosts that cannot set headers (e.g. GitHub Pages), the page registers
 `coi-serviceworker.js`, which adds them and reloads the page once. This
 requires HTTPS (or `localhost`).
 
+Deploying to GitHub Pages
+-------------------------
+
+The workflow `.github/workflows/web_pages.yml` builds the site on every pull
+request into the `gh-pages` branch, and builds and deploys it on every push
+to `gh-pages` (or when run manually on that branch). One-time setup in the
+repository settings:
+
+1. *Settings > Pages > Build and deployment > Source*: select **GitHub Actions**.
+2. *Settings > Environments > github-pages > Deployment branches and tags*:
+   allow the `gh-pages` branch (by default only the default branch may deploy).
+
+The site is then published at `https://<owner>.github.io/<repository>/`.
+
+Static hosts cache files independently, so `web/tools/stamp_version.py`
+stamps a hash of the build into `index.html`, and the page appends it to the
+URLs of all code and data files. A deployment therefore never mixes files
+from two builds.
+
 How it works
 ------------
 
@@ -65,6 +84,7 @@ How it works
 | `src/webconsole.cpp` | Entry point, replacing `vfe/unix/unixconsole.cpp`. |
 | `shell/` | The web page (`index.html`, `app.js`, `style.css`) and workers. |
 | `tools/make_manifest.py` | Copies the example scenes into the site and writes `scenes.json`. |
+| `tools/stamp_version.py` | Writes `index.html` with the build version stamped into asset URLs. |
 | `tools/serve.py` | Local web server with the required headers. |
 
 - The page starts one long-lived worker (`render-worker.js`) that hosts the
