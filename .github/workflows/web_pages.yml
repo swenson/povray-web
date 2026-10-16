@@ -1,0 +1,92 @@
+name: 'Web Build (GitHub Pages)'
+
+# Builds the WebAssembly version of POV-Ray (see web/README.md) and deploys it
+# to GitHub Pages. Pull requests into gh-pages are built but not deployed.
+#
+# One-time repository setup:
+#   Settings > Pages > Build and deployment > Source: "GitHub Actions".
+#   Settings > Environments > github-pages > Deployment branches: allow gh-pages.
+
+on:
+  push:
+    branches: [ 'gh-pages' ]
+  pull_request:
+    branches: [ 'gh-pages' ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-pages-${{ github.ref }}
+  # Never cancel a deployment half-way; superseded PR builds may be cancelled.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  EMSDK_VERSION: '6.0.12'
+
+jobs:
+  build:
+    name: 'Build'
+    runs-on: ubuntu-24.04
+
+    steps:
+    - name: 'Check out Repository'
+      uses: actions/checkout@v5
+
+    - name: 'Cache Emscripten SDK'
+      id: cache-emsdk
+      uses: actions/cache@v4
+      with:
+        path: emsdk
+        key: emsdk-${{ env.EMSDK_VERSION }}-${{ runner.os }}
+
+    - name: 'Install Emscripten SDK'
+      if: steps.cache-emsdk.outputs.cache-hit != 'true'
+      run: |
+        git clone --depth 1 --branch "$EMSDK_VERSION" https://github.com/emscripten-core/emsdk.git emsdk
+        emsdk/emsdk install "$EMSDK_VERSION"
+
+    - name: 'Build'
+      run: |
+        emsdk/emsdk activate "$EMSDK_VERSION"
+        source emsdk/emsdk_env.sh
+        web/build.sh -DPOVWEB_BUILT_BY="GitHub Actions (${{ github.repository }}@${GITHUB_SHA::7})"
+
+    - name: 'Check Site'
+      run: |
+        site=build-web/site
+        for f in index.html app.js render-worker.js coi-serviceworker.js style.css \
+                 povray.js povray.wasm povray.data scenes.json; do
+          test -s "$site/$f" || { echo "::error::missing $site/$f"; exit 1; }
+        done
+        if grep -q '@POVWEB_VERSION@' "$site/index.html"; then
+          echo "::error::index.html was not version-stamped"; exit 1
+        fi
+        python3 -c "import json,sys; m=json.load(open('$site/scenes.json')); print(len(m['scenes']), 'example scenes')"
+        du -sh "$site"
+
+    - name: 'Upload Pages Artifact'
+      if: github.event_name != 'pull_request'
+      uses: actions/upload-pages-artifact@v4
+      with:
+        path: build-web/site
+
+  deploy:
+    name: 'Deploy'
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/gh-pages'
+    runs-on: ubuntu-24.04
+
+    permissions:
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+    - name: 'Deploy to GitHub Pages'
+      id: deployment
+      uses: actions/deploy-pages@v4
